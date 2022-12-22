@@ -2,6 +2,7 @@ import os
 import unittest
 import vtk, qt, ctk, slicer
 from slicer.ScriptedLoadableModule import *
+from slicer.util import VTKObservationMixin
 import re
 import numpy
 import collections
@@ -10,7 +11,7 @@ import json
 import platform
 
 #
-# BrainZoneDetector
+# BrainZoneDetector. Based on the code from https://github.com/mnarizzano/SEEGA
 #
 
 class BrainZoneDetector(ScriptedLoadableModule):
@@ -20,45 +21,57 @@ class BrainZoneDetector(ScriptedLoadableModule):
 
     def __init__(self, parent):
         ScriptedLoadableModule.__init__(self, parent)
-        self.parent.title = "2. Brain Zone Detector"  # TODO make this more human readable by adding spaces
-        self.parent.categories = ["SEEGA"]
+        self.parent.title = "Brain Zone Detector"
+        self.parent.categories = ["SpectralSEEG"]
         self.parent.dependencies = []
-        self.parent.contributors = ["G. Arnulfo (Univ. Genoa) & M. Narizzano (Univ. Genoa)"]
+        self.parent.contributors = ["Mauricio Cespedes Tenorio (Western University)"]
         self.parent.helpText = """
     This tool localize the brain zone of a set of points choosen from a markups 
     """
         self.parent.acknowledgementText = """
-"""  # replace with organization, grant and thanks.
+This file was originally developed by G. Arnulfo (Univ. Genoa) & M. Narizzano (Univ. Genoa) as part
+of the module <a href="https://github.com/mnarizzano/SEEGA">SEEG Assistant</a>.
+Refer to the following publication: 
+Narizzano M., Arnulfo G., Ricci S., Toselli B., Canessa A., Tisdall M., Fato M. M., 
+Cardinale F. “SEEG Assistant: a 3DSlicer extension to support epilepsy surgery” 
+BMC Bioinformatics (2017) doi;10.1186/s12859-017-1545-8, In Press
+""" 
 
 
 #
 # Brain Zone DetectorWidget
 #
 
-class BrainZoneDetectorWidget(ScriptedLoadableModuleWidget):
+class BrainZoneDetectorWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     """Uses ScriptedLoadableModuleWidget base class, available at:
   https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
   """
+    def __init__(self, parent=None):
+        """
+        Called when the user opens the module the first time and the widget is initialized.
+        """
+        ScriptedLoadableModuleWidget.__init__(self, parent)
+        VTKObservationMixin.__init__(self)  # needed for parameter node observation
+        self.logic = None
+        self._parameterNode = None
+        self._updatingGUIFromParameterNode = False
+        self.lutPath = (self.resourcePath('Data/FreeSurferColorLUT20060522.txt'),
+                        self.resourcePath('Data/FreeSurferColorLUT20120827.txt'),
+                        self.resourcePath('Data/FreeSurferColorLUT20150729.txt')
+                        )
+        print(self.lutPath)
+        # (os.path.join(slicer.app.slicerHome,'NA-MIC/Extensions-30893/SlicerFreeSurfer/share/Slicer-5.0/qt-loadable-modules/FreeSurferImporter/FreeSurferColorLUT20060522.txt'), \
+        #                 os.path.join(slicer.app.slicerHome,'NA-MIC/Extensions-30893/SlicerFreeSurfer/share/Slicer-5.0/qt-loadable-modules/FreeSurferImporter/FreeSurferColorLUT20120827.txt'), \
+        #                 os.path.join(slicer.app.slicerHome,'NA-MIC/Extensions-30893/SlicerFreeSurfer/share/Slicer-5.0/qt-loadable-modules/FreeSurferImporter/FreeSurferColorLUT20150729.txt'))
+        #                 #os.path.join(slicer.app.slicerHome,'NA-MIC/Extensions-30893/SlicerFreeSurfer/share/Slicer-5.0/qt-loadable-modules/FreeSurferImporter/Simple_surface_labels2002.txt'))
 
     def setup(self):
+         """
+        Called when the user opens the module the first time and the widget is initialized.
+        """
         ScriptedLoadableModuleWidget.setup(self)
 
-        # [TODO]
-        # Si potrebbe avere un file di configurazione che contiene eventualmente un path alla colorlut
-        # Se non e' vuoto allora lo prendo se no prendo questo di default
-        if platform.system() == "Darwin":
-            self.lutPath = (os.path.join(slicer.app.slicerHome, 'Extensions-30893/SlicerFreeSurfer/share/Slicer-5.0/qt-loadable-modules/FreeSurferImporter/FreeSurferColorLUT20120827.txt'),\
-                       #os.path.join(slicer.app.slicerHome, 'Extensions-30893/SlicerFreeSurfer/share/Slicer-5.0/qt-loadable-modules/FreeSurferImporter/FreeSurferColorLUT20060522.txt'),\
-                       os.path.join(slicer.app.slicerHome, 'Extensions-30893/SlicerFreeSurfer/share/Slicer-5.0/qt-loadable-modules/FreeSurferImporter/FreeSurferColorLUT20150729.txt'))
-                       #os.path.join(slicer.app.slicerHome, 'Extensions-30893/SlicerFreeSurfer/share/Slicer-5.0/qt-loadable-modules/FreeSurferImporter/Simple_surface_labels2002.txt'))
-        else:
-            self.lutPath = (os.path.join(slicer.app.slicerHome,'NA-MIC/Extensions-30893/SlicerFreeSurfer/share/Slicer-5.0/qt-loadable-modules/FreeSurferImporter/FreeSurferColorLUT20120827.txt'), \
-                            #os.path.join(slicer.app.slicerHome,'NA-MIC/Extensions-30893/SlicerFreeSurfer/share/Slicer-5.0/qt-loadable-modules/FreeSurferImporter/FreeSurferColorLUT20060522.txt'), \
-                            os.path.join(slicer.app.slicerHome,'NA-MIC/Extensions-30893/SlicerFreeSurfer/share/Slicer-5.0/qt-loadable-modules/FreeSurferImporter/FreeSurferColorLUT20150729.txt'))
-                            #os.path.join(slicer.app.slicerHome,'NA-MIC/Extensions-30893/SlicerFreeSurfer/share/Slicer-5.0/qt-loadable-modules/FreeSurferImporter/Simple_surface_labels2002.txt'))
 
-
-        print (self.lutPath)
         # [END TODO]
 
         atlasNode = slicer.mrmlScene.GetNodesByName('aparc*').GetItemAsObject(0)
@@ -103,8 +116,8 @@ class BrainZoneDetectorWidget(ScriptedLoadableModuleWidget):
         # instead of filling hardwired values
         # we can check share/Freesurfer folder and
         # fill selector with available files
+        self.lutSelector.addItem('FreeSurferColorLUT20060522')
         self.lutSelector.addItem('FreeSurferColorLUT20120827')
-        #self.lutSelector.addItem('FreeSurferColorLUT20060522')
         self.lutSelector.addItem('FreeSurferColorLUT20150729')
         #self.lutSelector.addItem('Simple_surface_labels2002')
 

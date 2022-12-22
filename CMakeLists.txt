@@ -18,9 +18,7 @@ include(${Slicer_USE_FILE})
 
 #-----------------------------------------------------------------------------
 # Extension modules
-add_subdirectory(DEETO)
-add_subdirectory(Zone Detector)
-add_subdirectory(GMPI Computation)
+add_subdirectory(BrainZoneDetector)
 ## NEXT_MODULE
 
 #-----------------------------------------------------------------------------
