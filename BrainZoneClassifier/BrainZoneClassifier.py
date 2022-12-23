@@ -11,17 +11,17 @@ import json
 import platform
 
 #
-# BrainZoneDetector. Based on the code from https://github.com/mnarizzano/SEEGA
+# BrainZoneClassifier. Based on the code from https://github.com/mnarizzano/SEEGA
 #
 
-class BrainZoneDetector(ScriptedLoadableModule):
+class BrainZoneClassifier(ScriptedLoadableModule):
     """Uses ScriptedLoadableModule base class, available at:
   https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
   """
 
     def __init__(self, parent):
         ScriptedLoadableModule.__init__(self, parent)
-        self.parent.title = "Brain Zone Detector"
+        self.parent.title = "Brain Zone Classifier"
         self.parent.categories = ["SpectralSEEG"]
         self.parent.dependencies = []
         self.parent.contributors = ["Mauricio Cespedes Tenorio (Western University)"]
@@ -42,7 +42,7 @@ BMC Bioinformatics (2017) doi;10.1186/s12859-017-1545-8, In Press
 # Brain Zone DetectorWidget
 #
 
-class BrainZoneDetectorWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
+class BrainZoneClassifierWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     """Uses ScriptedLoadableModuleWidget base class, available at:
   https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
   """
@@ -66,82 +66,27 @@ class BrainZoneDetectorWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         #                 #os.path.join(slicer.app.slicerHome,'NA-MIC/Extensions-30893/SlicerFreeSurfer/share/Slicer-5.0/qt-loadable-modules/FreeSurferImporter/Simple_surface_labels2002.txt'))
 
     def setup(self):
-         """
+        """
         Called when the user opens the module the first time and the widget is initialized.
         """
         ScriptedLoadableModuleWidget.setup(self)
 
+        self._loadUI()
 
-        # [END TODO]
+        # Connections
+		self._setupConnections()
+    
+    def _loadUI(self):
+        # Load widget from .ui file (created by Qt Designer).
+        # Additional widgets can be instantiated manually and added to self.layout.
+        uiWidget = slicer.util.loadUI(self.resourcePath('UI/BrainZoneClassifier.ui'))
+        self.layout.addWidget(uiWidget)
+        self.ui = slicer.util.childWidgetVariables(uiWidget)
 
-        atlasNode = slicer.mrmlScene.GetNodesByName('aparc*').GetItemAsObject(0)
-        reconFileNode = slicer.mrmlScene.GetNodesByName('recon').GetItemAsObject(0)
-
-        self.zonedetectionCB = ctk.ctkCollapsibleButton()
-        self.zonedetectionCB.text = "Brain Zone Detection"
-
-        self.layout.addWidget(self.zonedetectionCB)
-
-        self.zoneDetectionLayout = qt.QFormLayout(self.zonedetectionCB)
-
-        ### Select Atlas
-        self.atlasInputSelector = slicer.qMRMLNodeComboBox()
-        self.atlasInputSelector.nodeTypes = ("vtkMRMLLabelMapVolumeNode","vtkMRMLScalarVolumeNode")
-        #self.atlasInputSelector.addAttribute("vtkMRMLScalarVolumeNode", "LabelMap", 0)
-        self.atlasInputSelector.selectNodeUponCreation = True
-        self.atlasInputSelector.addEnabled = False
-        self.atlasInputSelector.removeEnabled = False
-        self.atlasInputSelector.noneEnabled = True
-        self.atlasInputSelector.showHidden = False
-        self.atlasInputSelector.showChildNodeTypes = False
-        self.atlasInputSelector.setMRMLScene(slicer.mrmlScene)
-        self.atlasInputSelector.setToolTip("Pick the volumetric Atlas.")
-        self.zoneDetectionLayout.addRow("Volumetric parcels: ", self.atlasInputSelector)
-
-        self.dialog = qt.QFileDialog()
-        self.dialog.setFileMode(qt.QFileDialog.AnyFile)
-        self.dialog.setToolTip("Pick the input to the algorithm.")
-
-        self.fidsSelectorZone = slicer.qMRMLNodeComboBox()
-        self.fidsSelectorZone.nodeTypes = (("vtkMRMLMarkupsFiducialNode"), "")
-        self.fidsSelectorZone.selectNodeUponCreation = False
-        self.fidsSelectorZone.addEnabled = False
-        self.fidsSelectorZone.removeEnabled = False
-        self.fidsSelectorZone.noneEnabled = True
-        self.fidsSelectorZone.setMRMLScene(slicer.mrmlScene)
-        self.fidsSelectorZone.setToolTip("Select a fiducial list")
-        self.zoneDetectionLayout.addRow("Fiducial : ", self.fidsSelectorZone)
-
-        self.lutSelector = qt.QComboBox()
-        # instead of filling hardwired values
-        # we can check share/Freesurfer folder and
-        # fill selector with available files
-        self.lutSelector.addItem('FreeSurferColorLUT20060522')
-        self.lutSelector.addItem('FreeSurferColorLUT20120827')
-        self.lutSelector.addItem('FreeSurferColorLUT20150729')
-        #self.lutSelector.addItem('Simple_surface_labels2002')
-
-
-        self.ROISize = qt.QLineEdit("7")
-        self.ROISize.setToolTip("Define side length of cubic region centered in contact centroid")
-        self.ROISize.setInputMask("D")
-
-        # Run Zone Detection button
-        self.zoneButton = qt.QPushButton("Apply")
-        self.zoneButton.toolTip = "Run the algorithm."
-        self.zoneButton.enabled = True
-
-        self.zoneDetectionLayout.addRow("Spherical Region Side Length:", self.ROISize)
-        self.zoneDetectionLayout.addRow(self.lutSelector)
-        self.zoneDetectionLayout.addRow(self.zoneButton)
-
-        if atlasNode:
-            self.atlasInputSelector.setCurrentNode(atlasNode)
-        if reconFileNode:
-            self.fidsSelectorZone.setCurrentNode(reconFileNode)
-
-        # connections
-        self.zoneButton.connect('clicked(bool)', self.onZoneButton)
+        # Set scene in MRML widgets. Make sure that in Qt designer the top-level qMRMLWidget's
+        # "mrmlSceneChanged(vtkMRMLScene*)" signal in is connected to each MRML widget's.
+        # "setMRMLScene(vtkMRMLScene*)" slot.
+        uiWidget.setMRMLScene(slicer.mrmlScene)
 
     #######################################################################################
     ###  onZoneButton                                                                 #####
@@ -149,7 +94,7 @@ class BrainZoneDetectorWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
     def onZoneButton(self):
         slicer.util.showStatusMessage("START Zone Detection")
         print ("RUN Zone Detection Algorithm")
-        BrainZoneDetectorLogic().runZoneDetection(self.fidsSelectorZone.currentNode(), \
+        BrainZoneClassifierLogic().runZoneDetection(self.fidsSelectorZone.currentNode(), \
                                                   self.atlasInputSelector.currentNode(), \
                                                   self.lutPath, int(self.ROISize.text),self.lutSelector.currentIndex)
         print ("END Zone Detection Algorithm")
@@ -161,10 +106,10 @@ class BrainZoneDetectorWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
 
 #########################################################################################
 ####                                                                                 ####
-#### BrainZoneDetectorLogic                                                          ####
+#### BrainZoneClassifierLogic                                                          ####
 ####                                                                                 ####
 #########################################################################################
-class BrainZoneDetectorLogic(ScriptedLoadableModuleLogic):
+class BrainZoneClassifierLogic(ScriptedLoadableModuleLogic):
     """
   """
 

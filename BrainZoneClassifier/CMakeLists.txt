@@ -8,6 +8,7 @@ set(MODULE_PYTHON_SCRIPTS
 
 set(MODULE_PYTHON_RESOURCES
   Resources/Icons/${MODULE_NAME}.png
+  Resources/UI/${MODULE_NAME}.ui
   Resources/Data/FreeSurferColorLUT20060522.txt
   Resources/Data/FreeSurferColorLUT20120827.txt
   Resources/Data/FreeSurferColorLUT20150729.txt
