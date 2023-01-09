@@ -55,6 +55,8 @@ class BrainZoneClassifierWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         self.logic = None
         self._parameterNode = None
         self._updatingGUIFromParameterNode = False
+        self._bool_plan = False
+        self._Nodes_selected = False
         self.lutPath = (self.resourcePath('Data/FreeSurferColorLUT20060522.txt'),
                         self.resourcePath('Data/FreeSurferColorLUT20120827.txt'),
                         self.resourcePath('Data/FreeSurferColorLUT20150729.txt')
@@ -72,9 +74,12 @@ class BrainZoneClassifierWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         ScriptedLoadableModuleWidget.setup(self)
 
         self._loadUI()
+        self.ui.inputParcelsSelector.setMRMLScene(slicer.mrmlScene)
+        self.ui.inputFiducialSelector.setMRMLScene(slicer.mrmlScene)
+        self.logic = BrainZoneClassifierLogic()
 
         # Connections
-		self._setupConnections()
+        self._setupConnections()
     
     def _loadUI(self):
         # Load widget from .ui file (created by Qt Designer).
@@ -82,16 +87,176 @@ class BrainZoneClassifierWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         uiWidget = slicer.util.loadUI(self.resourcePath('UI/BrainZoneClassifier.ui'))
         self.layout.addWidget(uiWidget)
         self.ui = slicer.util.childWidgetVariables(uiWidget)
+        list_lut = ['FreeSurferColorLUT20060522', 'FreeSurferColorLUT20120827', 'FreeSurferColorLUT20150729']
+        self.ui.planName.addItems(['Select LUT file']+list_lut)
+        self.ui.planName.setCurrentIndex(self.ui.planName.findText('Select LUT file'))
 
         # Set scene in MRML widgets. Make sure that in Qt designer the top-level qMRMLWidget's
         # "mrmlSceneChanged(vtkMRMLScene*)" signal in is connected to each MRML widget's.
         # "setMRMLScene(vtkMRMLScene*)" slot.
         uiWidget.setMRMLScene(slicer.mrmlScene)
 
+
+    def _setupConnections(self):
+        # Connections
+        # These connections ensure that we update parameter node when scene is closed
+        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent, self.onSceneStartClose)
+        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent, self.onSceneEndClose)
+
+        # These connections ensure that whenever user changes some settings on the GUI, that is saved in the MRML scene
+        # (in the selected parameter node).
+        self.ui.inputParcelsSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.updateParameterNodeFromGUI)
+        self.ui.inputFiducialSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.updateParameterNodeFromGUI)
+        self.ui.planName.connect('currentIndexChanged(int)', self.onPlanChange)
+        print('ca')
+
+        # Buttons
+        self.ui.applyButton.connect('clicked(bool)', self.onApplyButton)
+
+        # Make sure parameter node is initialized (needed for module reload)
+        self.initializeParameterNode()
+    
+    def cleanup(self):
+        """
+        Called when the application closes and the module widget is destroyed.
+        """
+        self.removeObservers()
+
+    def onSceneStartClose(self, caller, event):
+        """
+        Called just before the scene is closed.
+        """
+        # Parameter node will be reset, do not use it anymore
+        self.setParameterNode(None)
+
+    def onSceneEndClose(self, caller, event):
+        """
+        Called just after the scene is closed.
+        """
+        # If this module is shown while the scene is closed then recreate a new parameter node immediately
+        if self.parent.isEntered:
+            self.initializeParameterNode()
+
+    def initializeParameterNode(self):
+        """
+        Ensure parameter node exists and observed.
+        """
+        # Parameter node stores all user choices in parameter values, node selections, etc.
+        # so that when the scene is saved and reloaded, these settings are restored.
+
+        self.setParameterNode(self.logic.getParameterNode())
+
+        # Select default input nodes if nothing is selected yet to save a few clicks for the user
+        # if not self._parameterNode.GetNodeReference("InputParcel"):
+        #     firstVolumeNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")
+        #     if firstVolumeNode:
+        #         self._parameterNode.SetNodeReferenceID("InputParcel", firstVolumeNode.GetID())
+        # if not self._parameterNode.GetNodeReference("InputFiducial"):
+        #     firstVolumeNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")
+        #     if firstVolumeNode:
+        #         self._parameterNode.SetNodeReferenceID("InputFiducial", firstVolumeNode.GetID())
+
+    def setParameterNode(self, inputParameterNode):
+        """
+        Set and observe parameter node.
+        Observation is needed because when the parameter node is changed then the GUI must be updated immediately.
+        """
+
+        if inputParameterNode:
+            self.logic.setDefaultParameters(inputParameterNode)
+
+        # Unobserve previously selected parameter node and add an observer to the newly selected.
+        # Changes of parameter node are observed so that whenever parameters are changed by a script or any other module
+        # those are reflected immediately in the GUI.
+        if self._parameterNode is not None:
+            self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromParameterNode)
+        self._parameterNode = inputParameterNode
+        if self._parameterNode is not None:
+            self.addObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromParameterNode)
+
+        # Initial GUI update
+        self.updateGUIFromParameterNode()
+
+    def updateGUIFromParameterNode(self, caller=None, event=None):
+        """
+        This method is called whenever parameter node is changed.
+        The module GUI is updated to show the current state of the parameter node.
+        """
+        if self._parameterNode is None or self._updatingGUIFromParameterNode:
+            print('lolo')
+            return
+
+        # Make sure GUI changes do not call updateParameterNodeFromGUI (it could cause infinite loop)
+        self._updatingGUIFromParameterNode = True
+
+        # Update node selectors and sliders
+        self.ui.inputParcelsSelector.setCurrentNode(self._parameterNode.GetNodeReference("InputParcel"))
+        self.ui.inputFiducialSelector.setCurrentNode(self._parameterNode.GetNodeReference("InputFiducial"))
+        print('aqui')
+
+        # Update buttons states and tooltips
+        inputParcel = self._parameterNode.GetNodeReference("InputParcel")
+        inputFiducial = self._parameterNode.GetNodeReference("InputFiducial")
+        lut_input = self.ui.planName.currentIndex
+        # Condition to change button: self._bool_plan
+        # Set state of apply button
+        if inputParcel and inputFiducial:
+            self._Nodes_selected = True
+            if self._bool_plan:
+                self.ui.applyButton.toolTip = "Extract positions"
+                self.ui.applyButton.enabled = True
+        else:
+            self.ui.applyButton.toolTip = "Select the two required inputs"
+            self.ui.applyButton.enabled = False
+            self._Nodes_selected = False
+
+        # if inputVolume:
+        #     self.ui.outputVolumeSelector.baseName = inputVolume.GetName() + " stripped"
+        #     self.ui.outputSegmentationSelector.baseName = inputVolume.GetName() + " mask"
+
+        # All the GUI updates are done
+        self._updatingGUIFromParameterNode = False
+    
+    def onPlanChange(self):
+        """
+        This method is called whenever plan object is changed.
+        The module GUI is updated to show the current state of the parameter node.
+        """
+        if self._parameterNode is None or self._updatingGUIFromParameterNode:
+            print('lolo')
+            return
+        # Set state of button
+        if self.ui.planName.currentIndex != 0:
+            self._bool_plan = True
+            if self._Nodes_selected:
+                self.ui.applyButton.toolTip = "Extract positions"
+                self.ui.applyButton.enabled = True
+        else: # The button must be disabled if the condition is not met
+            self.ui.applyButton.toolTip = "Select the two required inputs"
+            self.ui.applyButton.enabled = False
+            self._bool_plan = False
+
+    def updateParameterNodeFromGUI(self, caller=None, event=None):
+        """
+        This method is called when the user makes any change in the GUI.
+        The changes are saved into the parameter node (so that they are restored when the scene is saved and loaded).
+        """
+
+        if self._parameterNode is None or self._updatingGUIFromParameterNode:
+            return
+
+        wasModified = self._parameterNode.StartModify()  # Modify all properties in a single batch
+
+        self._parameterNode.SetNodeReferenceID("InputParcel", self.ui.inputParcelsSelector.currentNodeID)
+        self._parameterNode.SetNodeReferenceID("InputFiducial", self.ui.inputFiducialSelector.currentNodeID)
+        self._parameterNode.SetParameter("LUT", self.ui.planName.currentText)
+
+        self._parameterNode.EndModify(wasModified)
+
     #######################################################################################
     ###  onZoneButton                                                                 #####
     #######################################################################################
-    def onZoneButton(self):
+    def onApplyButton(self):
         slicer.util.showStatusMessage("START Zone Detection")
         print ("RUN Zone Detection Algorithm")
         BrainZoneClassifierLogic().runZoneDetection(self.fidsSelectorZone.currentNode(), \
@@ -100,8 +265,6 @@ class BrainZoneClassifierWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         print ("END Zone Detection Algorithm")
         slicer.util.showStatusMessage("END Zone Detection")
 
-    def cleanup(self):
-        pass
 
 
 #########################################################################################
@@ -114,126 +277,134 @@ class BrainZoneClassifierLogic(ScriptedLoadableModuleLogic):
   """
 
     def __init__(self):
+        ScriptedLoadableModuleLogic.__init__(self)
         # Create a Progress Bar
         self.pb = qt.QProgressBar()
+    
+    def setDefaultParameters(self, parameterNode):
+        """
+        Initialize parameter node with default settings.
+        """
+        if not parameterNode.GetParameter("LUT"):
+            parameterNode.SetParameter("LUT", "Select LUT file")
 
-    def runZoneDetection(self, fids, inputAtlas, colorLut, sideLength,lutIdx):
-        # initialize variables that will hold the number of fiducials
-        nFids = fids.GetNumberOfFiducials()
-        # the volumetric atlas
-        atlas = slicer.util.array(inputAtlas.GetName())
-        # an the transformation matrix from RAS coordinte to Voxels
-        ras2vox_atlas = vtk.vtkMatrix4x4()
-        inputAtlas.GetRASToIJKMatrix(ras2vox_atlas)
+    # def runZoneDetection(self, fids, inputAtlas, colorLut, sideLength,lutIdx):
+    #     # initialize variables that will hold the number of fiducials
+    #     nFids = fids.GetNumberOfFiducials()
+    #     # the volumetric atlas
+    #     atlas = slicer.util.array(inputAtlas.GetName())
+    #     # an the transformation matrix from RAS coordinte to Voxels
+    #     ras2vox_atlas = vtk.vtkMatrix4x4()
+    #     inputAtlas.GetRASToIJKMatrix(ras2vox_atlas)
 
-        # read freesurfer color LUT. It could possibly
-        # already exists within 3DSlicer modules
-        # but in python was too easy to read if from scratch that I simply
-        # read it again.
-        # FSLUT will hold for each brain area its tag and name
-        FSLUT = {}
-        with open(colorLut[lutIdx], 'r') as f:
-            for line in f:
-                if not re.match('^#', line) and len(line) > 10:
-                    lineTok = re.split('\s+', line)
-                    FSLUT[int(lineTok[0])] = lineTok[1]
+    #     # read freesurfer color LUT. It could possibly
+    #     # already exists within 3DSlicer modules
+    #     # but in python was too easy to read if from scratch that I simply
+    #     # read it again.
+    #     # FSLUT will hold for each brain area its tag and name
+    #     FSLUT = {}
+    #     with open(colorLut[lutIdx], 'r') as f:
+    #         for line in f:
+    #             if not re.match('^#', line) and len(line) > 10:
+    #                 lineTok = re.split('\s+', line)
+    #                 FSLUT[int(lineTok[0])] = lineTok[1]
 
-        with open(os.path.join(os.path.dirname(__file__), './Resources/parc_fullnames.json')) as dataParcNames:
-            parcNames = json.load(dataParcNames)
+    #     with open(os.path.join(os.path.dirname(__file__), './Resources/parc_fullnames.json')) as dataParcNames:
+    #         parcNames = json.load(dataParcNames)
 
-        with open(os.path.join(os.path.dirname(__file__), './Resources/parc_shortnames.json')) as dataParcAcronyms:
-            parcAcronyms = json.load(dataParcAcronyms)
+    #     with open(os.path.join(os.path.dirname(__file__), './Resources/parc_shortnames.json')) as dataParcAcronyms:
+    #         parcAcronyms = json.load(dataParcAcronyms)
 
-        # Initialize the progress bar pb
-        self.pb.setRange(0, nFids)
-        self.pb.show()
-        self.pb.setValue(0)
+    #     # Initialize the progress bar pb
+    #     self.pb.setRange(0, nFids)
+    #     self.pb.show()
+    #     self.pb.setValue(0)
 
-        # Update the app process events, i.e. show the progress of the
-        # progress bar
-        slicer.app.processEvents()
+    #     # Update the app process events, i.e. show the progress of the
+    #     # progress bar
+    #     slicer.app.processEvents()
 
-        listParcNames = [x for v in parcNames.values() for x in v]
-        listParcAcron = [x for v in parcAcronyms.values() for x in v]
+    #     listParcNames = [x for v in parcNames.values() for x in v]
+    #     listParcAcron = [x for v in parcAcronyms.values() for x in v]
 
-        for i in range(nFids):
-            # update progress bar
-            self.pb.setValue(i + 1)
-            slicer.app.processEvents()
+    #     for i in xrange(nFids):
+    #         # update progress bar
+    #         self.pb.setValue(i + 1)
+    #         slicer.app.processEvents()
 
-            # Only for Active Fiducial points the GMPI is computed
-            if fids.GetNthFiducialSelected(i) == True:
+    #         # Only for Active Fiducial points the GMPI is computed
+    #         if fids.GetNthFiducialSelected(i) == True:
 
-                # instantiate the variable which holds the point
-                currContactCentroid = [0, 0, 0]
+    #             # instantiate the variable which holds the point
+    #             currContactCentroid = [0, 0, 0]
 
-                # copy current position from FiducialList
-                fids.GetNthFiducialPosition(i, currContactCentroid)
+    #             # copy current position from FiducialList
+    #             fids.GetNthFiducialPosition(i, currContactCentroid)
 
-                # append 1 at the end of array before applying transform
-                currContactCentroid.append(1)
+    #             # append 1 at the end of array before applying transform
+    #             currContactCentroid.append(1)
 
-                # transform from RAS to IJK
-                voxIdx = ras2vox_atlas.MultiplyFloatPoint(currContactCentroid)
-                voxIdx = numpy.round(numpy.array(voxIdx[:3])).astype(int)
+    #             # transform from RAS to IJK
+    #             voxIdx = ras2vox_atlas.MultiplyFloatPoint(currContactCentroid)
+    #             voxIdx = numpy.round(numpy.array(voxIdx[:3])).astype(int)
 
-                # build a -sideLength/2:sideLength/2 linear mask
-                mask = numpy.arange(int(-numpy.floor(sideLength / 2)), int(numpy.floor(sideLength / 2) + 1))
+    #             # build a -sideLength/2:sideLength/2 linear mask
+    #             mask = numpy.arange(int(-numpy.floor(sideLength / 2)), int(numpy.floor(sideLength / 2) + 1))
 
-                # get Patch Values from loaded Atlas in a sideLenght**3 region around
-                # contact centroid and extract the frequency for each unique
-                # patch Value present in the region
+    #             # get Patch Values from loaded Atlas in a sideLenght**3 region around
+    #             # contact centroid and extract the frequency for each unique
+    #             # patch Value present in the region
 
-                [X, Y, Z] = numpy.meshgrid(mask, mask, mask)
-                maskVol = numpy.sqrt(X ** 2 + Y ** 2 + Z ** 2) <= numpy.floor(sideLength / 2)
+    #             [X, Y, Z] = numpy.meshgrid(mask, mask, mask)
+    #             maskVol = numpy.sqrt(X ** 2 + Y ** 2 + Z ** 2) <= numpy.floor(sideLength / 2)
 
-                X = X[maskVol] + voxIdx[0]
-                Y = Y[maskVol] + voxIdx[1]
-                Z = Z[maskVol] + voxIdx[2]
+    #             X = X[maskVol] + voxIdx[0]
+    #             Y = Y[maskVol] + voxIdx[1]
+    #             Z = Z[maskVol] + voxIdx[2]
 
-                patchValues = atlas[Z, Y, X]
+    #             patchValues = atlas[Z, Y, X]
 
-                # Find the unique values on the matrix above
-                uniqueValues = numpy.unique(patchValues)
+    #             # Find the unique values on the matrix above
+    #             uniqueValues = numpy.unique(patchValues)
 
-                # Flatten the patch value and create a tuple
-                patchValues = tuple(patchValues.flatten('f'))
+    #             # Flatten the patch value and create a tuple
+    #             patchValues = tuple(patchValues.flatten(1))
 
-                voxWhite = patchValues.count(2) + patchValues.count(41)
-                voxGray = len(patchValues) - voxWhite
-                PTD = float(voxGray - voxWhite) / (voxGray + voxWhite)
+    #             voxWhite = patchValues.count(2) + patchValues.count(41)
+    #             voxGray = len(patchValues) - voxWhite
+    #             PTD = float(voxGray - voxWhite) / (voxGray + voxWhite)
 
-                # Create an array of frequency for each unique value
-                itemfreq = [patchValues.count(x) for x in uniqueValues]
+    #             # Create an array of frequency for each unique value
+    #             itemfreq = [patchValues.count(x) for x in uniqueValues]
 
-                # Compute the max frequency
-                totPercentage = numpy.sum(itemfreq)
+    #             # Compute the max frequency
+    #             totPercentage = numpy.sum(itemfreq)
 
-                # Recover the real patch names
-                patchNames = [re.sub('((ctx_.h_)|(Right|Left)-(Cerebral-)?)', '', FSLUT[pValues]) for pValues in uniqueValues]
-                patchAcron = list()
-                for currPatchName in patchNames:
-                    currPatchAcron = ''
-                    for name, acron in zip(listParcNames, listParcAcron):
-                        if currPatchName == name:
-                            currPatchAcron = acron
+    #             # Recover the real patch names
+    #             patchNames = [re.sub('((ctx_.h_)|(Right|Left)-(Cerebral-)?)', '', FSLUT[pValues]) for pValues in uniqueValues]
+    #             patchAcron = list()
+    #             for currPatchName in patchNames:
+    #                 currPatchAcron = ''
+    #                 for name, acron in zip(listParcNames, listParcAcron):
+    #                     if currPatchName == name:
+    #                         currPatchAcron = acron
 
-                    if currPatchAcron:
-                        patchAcron.append(currPatchAcron)
-                    else:
-                        patchAcron.append(currPatchName)
+    #                 if currPatchAcron:
+    #                     patchAcron.append(currPatchAcron)
+    #                 else:
+    #                     patchAcron.append(currPatchName)
 
-                # Create the zones
-                parcels = dict(zip(itemfreq, patchAcron))
+    #             # Create the zones
+    #             parcels = dict(zip(itemfreq, patchAcron))
 
-                # prepare parcellation string with percentage of values
-                # within the ROI centered in currContactCentroid
-                # [round( float(k) / totPercentage * 100 ) for k,v in parcels.iteritems()]
-                ordParcels = collections.OrderedDict(sorted(parcels.items(), reverse=True))
-                anatomicalPositionsString = [','.join([v, str(round(float(k) / totPercentage * 100))]) for k, v in
-                                             ordParcels.items()]
-                anatomicalPositionsString.append('PTD, {:.2f}'.format(PTD))
+    #             # prepare parcellation string with percentage of values
+    #             # within the ROI centered in currContactCentroid
+    #             # [round( float(k) / totPercentage * 100 ) for k,v in parcels.iteritems()]
+    #             ordParcels = collections.OrderedDict(sorted(parcels.items(), reverse=True))
+    #             anatomicalPositionsString = [','.join([v, str(round(float(k) / totPercentage * 100))]) for k, v in
+    #                                          ordParcels.iteritems()]
+    #             anatomicalPositionsString.append('PTD, {:.2f}'.format(PTD))
 
-                # Preserve if some old description was already there
-                fids.SetNthControlPointDescription(i, fids.GetNthControlPointDescription(i) + " " + ','.join(
-                    anatomicalPositionsString))
+    #             # Preserve if some old description was already there
+    #             fids.SetNthMarkupDescription(i, fids.GetNthMarkupDescription(i) + " " + ','.join(
+    #                 anatomicalPositionsString))

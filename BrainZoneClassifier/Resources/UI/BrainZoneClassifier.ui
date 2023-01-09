@@ -43,6 +43,12 @@
         <property name="removeEnabled">
          <bool>false</bool>
         </property>
+        <property name="noneEnabled">
+         <bool>true</bool>
+        </property>
+        <property name="selectNodeUponCreation">
+         <bool>true</bool>
+        </property>
        </widget>
       </item>
       <item row="1" column="0">
@@ -71,6 +77,12 @@
         <property name="removeEnabled">
          <bool>false</bool>
         </property>
+        <property name="noneEnabled">
+         <bool>true</bool>
+        </property>
+        <property name="selectNodeUponCreation">
+         <bool>true</bool>
+        </property>
        </widget>
       </item>
       <item row="2" column="0">
@@ -90,21 +102,6 @@
             <height>22</height>
             </rect>
         </property>
-        <item>
-            <property name="text">
-            <string>FreeSurferColorLUT20060522</string>
-            </property>
-        </item>
-        <item>
-            <property name="text">
-            <string>FreeSurferColorLUT20120827</string>
-            </property>
-        </item>
-        <item>
-            <property name="text">
-            <string>FreeSurferColorLUT20150729</string>
-            </property>
-        </item>
        </widget>
       </item>
      </layout>
