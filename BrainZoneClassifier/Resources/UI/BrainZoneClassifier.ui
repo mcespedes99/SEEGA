@@ -65,7 +65,7 @@
         </property>
         <property name="nodeTypes">
          <stringlist>
-          <string>vtkMRMLScalarVolumeNode</string>
+          <string>vtkMRMLTableNode</string>
          </stringlist>
         </property>
         <property name="showChildNodeTypes">

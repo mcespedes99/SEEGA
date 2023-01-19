@@ -259,9 +259,9 @@ class BrainZoneClassifierWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
     def onApplyButton(self):
         slicer.util.showStatusMessage("START Zone Detection")
         print ("RUN Zone Detection Algorithm")
-        BrainZoneClassifierLogic().runZoneDetection(self.fidsSelectorZone.currentNode(), \
-                                                  self.atlasInputSelector.currentNode(), \
-                                                  self.lutPath, int(self.ROISize.text),self.lutSelector.currentIndex)
+        BrainZoneClassifierLogic().runZoneDetection(self.ui.inputParcelsSelector.currentNode(), \
+                                                  self.ui.inputFiducialSelector.currentNode(), \
+                                                  self.lutPath, self.ui.planName.currentIndex)
         print ("END Zone Detection Algorithm")
         slicer.util.showStatusMessage("END Zone Detection")
 
@@ -287,9 +287,68 @@ class BrainZoneClassifierLogic(ScriptedLoadableModuleLogic):
         """
         if not parameterNode.GetParameter("LUT"):
             parameterNode.SetParameter("LUT", "Select LUT file")
+    
+    def set_colors(self, colorTableNode, lut_file):
+        with open(lut_file, 'r') as f:
+            raw_lut = f.readlines()
 
-    # def runZoneDetection(self, fids, inputAtlas, colorLut, sideLength,lutIdx):
-    #     # initialize variables that will hold the number of fiducials
+        # read and process line by line
+        # label_map = pd.DataFrame(columns=['Label', 'R', 'G', 'B'])
+        for line in raw_lut:
+            # Remove empty spaces
+            line = line.strip()
+            if not (line.startswith('#') or not line):
+                s = line.split()
+                # info = list(filter(None, info))
+                # id = int(s[0])
+                info_s = {
+                    'id': int(s[0]),
+                    'Label': s[1],
+                    'R': int(s[2]),
+                    'G': int(s[3]),
+                    'B': int(s[4]),
+                    'A': int(s[5])
+                }
+                colorTableNode.SetColor(int(s[0]), s[1], int(s[2]), int(s[3]), int(s[4]), int(s[5]))
+                # info_s['A'] = 0 if (info_s['R']==0 & info_s['G']==0 & info_s['B']==0) else 255
+            #     info_s = pd.DataFrame(info_s, index=[id])
+            #     label_map = pd.concat([label_map,info_s], axis=0)
+            # label_map[['R','G','B']] = label_map[['R','G','B']].astype('int64')
+
+        return colorTableNode
+
+    def runZoneDetection(self, parc, fids, colorLut, lutIdx):
+        print(f'Parcellation file: {parc}')
+        print(f'Fiducial file: {fids}')
+        print(f'LUT list: {colorLut}')
+        print(f'LUT id: {lutIdx}')
+        # Convert volume to label map
+        label_node = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLLabelMapVolumeNode')
+        label_node.SetName('aparc+seg')
+        volumes_logic = slicer.modules.volumes.logic()
+        volumes_logic.CreateLabelVolumeFromVolume(slicer.mrmlScene, label_node, parc)
+        # Convert label map to segmentation
+        seg = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
+        
+        colorTableNode = slicer.mrmlScene.CreateNodeByClass("vtkMRMLColorTableNode")
+        colorTableNode.SetTypeToUser()
+        colorTableNode.HideFromEditorsOff()  # make the color table selectable in the GUI outside Colors module
+        print('1')
+        slicer.mrmlScene.AddNode(colorTableNode); colorTableNode.UnRegister(None)
+        print('2')
+        colorTableNode.SetNumberOfColors(14175+1) # Hard coded. Needs to be updated
+        print('3')
+        colorTableNode.SetNamesInitialised(True) # prevent automatic color name generation
+        print('4')
+        colorTableNode = self.set_colors(colorTableNode, colorLut[lutIdx-1])
+        print('5')
+        label_node.GetDisplayNode().SetAndObserveColorNodeID(colorTableNode.GetID())
+        slicer.modules.segmentations.logic().ImportLabelmapToSegmentationNode(label_node, seg)
+        seg.CreateClosedSurfaceRepresentation()
+        # Delete previous volume
+        slicer.mrmlScene.RemoveNode(parc)
+        slicer.mrmlScene.RemoveNode(label_node)
+    #     # initialize variables that will hold the number of fiducials 14175
     #     nFids = fids.GetNumberOfFiducials()
     #     # the volumetric atlas
     #     atlas = slicer.util.array(inputAtlas.GetName())
